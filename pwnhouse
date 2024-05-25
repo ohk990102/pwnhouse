@@ -1,0 +1,106 @@
+#! /usr/bin/env python
+
+import docker
+import subprocess
+
+docker_template = {
+    "Ubuntu_16_04": {
+        "Dockerfile": "Dockerfile.ubuntu_1604",
+        "image": "pwnhouse_ubuntu_1604"
+    },
+    "Ubuntu_18_04": {
+        "Dockerfile": "Dockerfile.ubuntu_1804",
+        "image": "pwnhouse_ubuntu_1804"
+    },
+    "Ubuntu_20_04": {
+        "Dockerfile": "Dockerfile.ubuntu_2004",
+        "image": "pwnhouse_ubuntu_2004"
+    },
+}
+
+client = docker.from_env()
+
+def get_nonconflicting_container_name(prefix: str):
+    containers = client.containers.list()
+    container_names = [container.name for container in containers]
+    if prefix not in container_names:
+        return prefix
+    
+    for i in range(1, 10000):
+        container_name = f'{prefix}_{str(i)}'
+        if container_name not in container_names:
+            return container_name
+    raise ValueError("No non-conflicting container name found!")
+
+# executing using subprocess because docker-py doesn't support DOCKER_BUILDKIT=1
+# return when build is finished
+# 
+def docker_build(path: str, dockerfile: str, image: str) -> bool:
+    proc = subprocess.Popen(['docker', 'build', '-f', dockerfile, '-t', image, path], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    while True:
+        line = proc.stdout.readline()
+        if not line:
+            break
+        print(line.decode('utf-8').strip())
+    proc.wait()
+    return proc.returncode == 0
+
+
+if __name__ == "__main__":
+    import argparse
+    import os
+    parser = argparse.ArgumentParser()
+
+    # subparser of command (up, down, list)
+    subparser = parser.add_subparsers(dest='command')
+    # up
+    parser_up = subparser.add_parser('up')
+    parser_up.add_argument('distro', choices=docker_template.keys(), help='distro to build')
+    
+    # down
+    parser_down = subparser.add_parser('down')
+
+    # list
+    parser_list = subparser.add_parser('list')
+
+    args = parser.parse_args()
+
+    path = os.getcwd()
+    probname = f'pwnhouse_{os.path.basename(path)}'
+
+    if args.command == 'up':
+        distro = args.distro
+        dockerfile = docker_template[distro]['Dockerfile']
+        image = docker_template[distro]['image']
+        templates_path = os.path.join(os.path.dirname(__file__), 'templates')
+        print(f'Using {templates_path} as templates path')
+        print(f'Building image {image} from {dockerfile}...')
+        if docker_build(path, os.path.join(templates_path, dockerfile), image) == False:
+            print(f'Image {image} build failed!')
+            exit(1)
+        print(f'Image {image} is built!')
+        container_name = get_nonconflicting_container_name(probname)
+        client.containers.run(
+            image=image,
+            name=container_name,
+            detach=True,
+            tty=True,
+            stdin_open=True,
+            privileged=True,
+            volumes={path: {'bind': '/home/pwnhouse/prob', 'mode': 'rw'}},
+            working_dir='/home/pwnhouse/prob'
+        )
+        print(f'Container {container_name} is up!')
+    elif args.command == 'down':
+        containers = client.containers.list()
+        for container in containers:
+            if probname in container.name:
+                container.stop()
+                container.remove()
+    elif args.command == 'list':
+        containers = client.containers.list()
+        for container in containers:
+            if container.name.startswith('pwnhouse_'):
+                print(container.name)
+    else:
+        parser.print_help()

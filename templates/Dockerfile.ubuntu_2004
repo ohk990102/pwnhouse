@@ -1,0 +1,75 @@
+FROM ubuntu:20.04
+
+RUN sed -i.bak -re "s/([a-z]{2}.)?archive.ubuntu.com|security.ubuntu.com/ftp.kaist.ac.kr/g" /etc/apt/sources.list
+
+RUN dpkg --add-architecture i386
+RUN apt-get update \
+	&& DEBIAN_FRONTEND=noninteractive apt-get install -y \
+	curl \
+	git \
+	golang \
+	sudo \
+	vim \
+	wget \
+    # Install zsh
+    zsh \
+    # Install pyenv dependencies
+	build-essential libssl-dev zlib1g-dev \
+	libbz2-dev libreadline-dev libsqlite3-dev curl \
+	libncurses5 libncurses5-dev libncursesw5 libncursesw5-dev xz-utils tk-dev libxml2-dev libxmlsec1-dev libffi-dev liblzma-dev \
+    # Install pwntools dependencies
+    python3-dev git libssl-dev libffi-dev build-essential \
+    locales \
+    # Install docker
+    ca-certificates curl gnupg \
+	# Install 32bit libraries
+	libc6:i386 libstdc++6:i386 gcc-multilib \
+	libc6-dbg libc-dbg:i386 \
+    && rm -rf /var/lib/apt/lists/*
+
+
+RUN sed -i '/en_US.UTF-8/s/^# //g' /etc/locale.gen && \
+    locale-gen
+ENV LANG en_US.UTF-8
+ENV LANGUAGE en_US:en
+ENV LC_ALL en_US.UTF-8
+
+# Setup docker
+ARG USER=pwnhouse
+RUN useradd --groups sudo --shell /bin/bash ${USER} \
+	&& echo "${USER} ALL=(ALL) NOPASSWD:ALL" >/etc/sudoers.d/${USER} \
+	&& chmod 0440 /etc/sudoers.d/${USER}
+USER ${USER}
+WORKDIR /home/${USER}
+
+# Setup oh-my-zsh
+RUN sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)"
+RUN sudo chsh -s $(which zsh) $(whoami)
+SHELL ["zsh", "-i", "-c"]
+
+# Setup pyenv
+RUN curl https://pyenv.run | bash
+RUN echo 'export PYENV_ROOT="$HOME/.pyenv"' >> ~/.zshrc
+RUN echo 'export PYENV_ROOT="$HOME/.pyenv"' >> ~/.zprofile
+RUN echo 'command -v pyenv >/dev/null || export PATH="$PYENV_ROOT/bin:$PATH"' >> ~/.zshrc
+RUN echo 'command -v pyenv >/dev/null || export PATH="$PYENV_ROOT/bin:$PATH"' >> ~/.zprofile
+RUN echo 'eval "$(pyenv init -)"' >> ~/.zshrc
+RUN echo 'eval "$(pyenv init -)"' >> ~/.zprofile
+RUN echo 'eval "$(pyenv virtualenv-init -)"' >> ~/.zshrc
+RUN echo 'eval "$(pyenv virtualenv-init -)"' >> ~/.zprofile
+
+RUN pyenv install 3.12
+RUN pyenv global 3.12
+
+# Setup pwntools
+RUN pip install --upgrade pip
+RUN pip install --upgrade pwntools
+
+# Setup additional tools for ctf
+RUN pip install --upgrade requests tqdm pqdm
+
+# Setup pwndbg
+RUN wget https://github.com/pwndbg/pwndbg/releases/download/2023.07.17-pkgs/pwndbg_2023.07.17_amd64.deb
+RUN sudo apt install ./pwndbg_2023.07.17_amd64.deb
+
+CMD [ "zsh" ]
